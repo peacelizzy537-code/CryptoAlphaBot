@@ -1,13 +1,13 @@
 import requests
 import json
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 from functools import lru_cache
 
 class CryptoBot:
     """
-    A cryptocurrency bot with rate limiting and error handling
+    A persistent cryptocurrency bot with rate limiting and continuous monitoring
     """
     
     def __init__(self):
@@ -18,12 +18,13 @@ class CryptoBot:
             'Accept': 'application/json'
         })
         self.last_request_time = 0
-        self.min_request_interval = 2  # 2 seconds between requests to avoid rate limiting
+        self.min_request_interval = 3  # 3 seconds between requests
         self.cache = {}
-        self.cache_timeout = 60  # Cache data for 60 seconds
+        self.cache_timeout = 120  # Cache for 2 minutes
+        self.running = True
         
     def _rate_limit(self):
-        """Implement rate limiting to avoid 429 errors"""
+        """Implement rate limiting"""
         current_time = time.time()
         time_since_last = current_time - self.last_request_time
         if time_since_last < self.min_request_interval:
@@ -48,56 +49,33 @@ class CryptoBot:
                 response = self.session.get(url, params=params, timeout=10)
                 
                 if response.status_code == 429:
-                    wait_time = (attempt + 1) * 5  # Exponential backoff
-                    print(f"Rate limited. Waiting {wait_time} seconds...")
+                    wait_time = (attempt + 1) * 5
+                    print(f"⚠️ Rate limited. Waiting {wait_time} seconds...")
                     time.sleep(wait_time)
                     continue
                 
                 response.raise_for_status()
                 data = response.json()
-                
-                # Cache successful response
                 self.cache[cache_key] = (data, current_time)
                 return data
                 
             except requests.RequestException as e:
-                print(f"Error fetching data (attempt {attempt + 1}/{retry_count}): {e}")
+                print(f"❌ Error (attempt {attempt + 1}/{retry_count}): {e}")
                 if attempt < retry_count - 1:
-                    time.sleep(2 ** attempt)  # Exponential backoff
+                    time.sleep(2 ** attempt)
                 else:
                     return {}
         
         return {}
     
-    def get_price(self, coin_id: str = 'bitcoin', currency: str = 'usd') -> float:
-        """Get current price of cryptocurrency"""
-        url = f"{self.base_url}/simple/price"
-        params = {'ids': coin_id, 'vs_currencies': currency}
-        data = self._make_request(url, params)
-        return data.get(coin_id, {}).get(currency, 0.0)
-    
     def get_prices_batch(self, coin_ids: List[str], currency: str = 'usd') -> Dict:
-        """Get prices for multiple cryptocurrencies in one request"""
+        """Get prices for multiple cryptocurrencies"""
         url = f"{self.base_url}/simple/price"
         params = {
             'ids': ','.join(coin_ids),
             'vs_currencies': currency
         }
-        data = self._make_request(url, params)
-        return data
-    
-    def get_market_data(self, coin_id: str = 'bitcoin') -> Dict:
-        """Get comprehensive market data"""
-        url = f"{self.base_url}/coins/{coin_id}"
-        params = {
-            'localization': 'false',
-            'tickers': 'false',
-            'market_data': 'true',
-            'community_data': 'false',
-            'developer_data': 'false'
-        }
-        data = self._make_request(url, params)
-        return data.get('market_data', {})
+        return self._make_request(url, params)
     
     def get_top_cryptos(self, limit: int = 10) -> List[Dict]:
         """Get top cryptocurrencies by market cap"""
@@ -137,14 +115,13 @@ class CryptoBot:
         return (current_price, change_percent)
     
     def portfolio_tracker(self, holdings: Dict[str, float]) -> Dict:
-        """Track portfolio value using batch requests"""
+        """Track portfolio value"""
         portfolio = {
             'total_value_usd': 0.0,
             'holdings': {},
             'timestamp': datetime.now().isoformat()
         }
         
-        # Get all prices in one request
         coin_ids = list(holdings.keys())
         prices = self.get_prices_batch(coin_ids, 'usd')
         
@@ -160,132 +137,87 @@ class CryptoBot:
         
         return portfolio
     
-    def get_price_trend(self, coin_id: str = 'bitcoin', 
-                       days: int = 7) -> Dict[str, any]:
-        """Analyze price trend over a period"""
-        prices = self.get_historical_price(coin_id, days)
-        
-        # Return default trend data if no prices
-        if not prices:
-            return {
-                'coin': coin_id,
-                'period_days': days,
-                'current_price': 0.0,
-                'highest_price': 0.0,
-                'lowest_price': 0.0,
-                'average_price': 0.0,
-                'volatility': 0.0,
-                'price_change_7d': 0.0,
-                'error': 'No data available'
-            }
-        
-        price_values = [p[1] for p in prices]
-        
-        trend = {
-            'coin': coin_id,
-            'period_days': days,
-            'current_price': price_values[-1] if price_values else 0,
-            'highest_price': max(price_values) if price_values else 0,
-            'lowest_price': min(price_values) if price_values else 0,
-            'average_price': sum(price_values) / len(price_values) if price_values else 0,
-            'volatility': self._calculate_volatility(price_values),
-            'price_change_7d': self.calculate_price_change(coin_id, days)[1]
-        }
-        
-        return trend
-    
-    def _calculate_volatility(self, prices: List[float]) -> float:
-        """Calculate price volatility (standard deviation)"""
-        if len(prices) < 2:
-            return 0.0
-        
-        mean = sum(prices) / len(prices)
-        variance = sum((p - mean) ** 2 for p in prices) / len(prices)
-        return variance ** 0.5
-    
     def get_global_market_data(self) -> Dict:
         """Get global cryptocurrency market data"""
         url = f"{self.base_url}/global"
         data = self._make_request(url)
         return data.get('data', {})
+    
+    def display_market_update(self):
+        """Display a single market update"""
+        print("\n" + "="*60)
+        print(f"📊 Market Update - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*60)
+        
+        # Get prices
+        prices = self.get_prices_batch(['bitcoin', 'ethereum', 'cardano'], 'usd')
+        btc_price = prices.get('bitcoin', {}).get('usd', 0)
+        eth_price = prices.get('ethereum', {}).get('usd', 0)
+        ada_price = prices.get('cardano', {}).get('usd', 0)
+        
+        print(f"💰 Bitcoin (BTC): ${btc_price:,.2f}")
+        print(f"💰 Ethereum (ETH): ${eth_price:,.2f}")
+        print(f"💰 Cardano (ADA): ${ada_price:,.2f}")
+        
+        # Get top cryptos
+        top_cryptos = self.get_top_cryptos(3)
+        if top_cryptos:
+            print("\n🏆 Top 3 Cryptocurrencies:")
+            for i, crypto in enumerate(top_cryptos, 1):
+                name = crypto.get('name', 'Unknown')
+                symbol = crypto.get('symbol', '').upper()
+                price = crypto.get('current_price', 0)
+                change = crypto.get('price_change_percentage_24h', 0)
+                print(f"  {i}. {name} (${symbol}): ${price:,.2f} ({change:+.2f}%)")
+        
+        # Portfolio value
+        holdings = {
+            'bitcoin': 0.5,
+            'ethereum': 2.0,
+            'cardano': 100
+        }
+        portfolio = self.portfolio_tracker(holdings)
+        print(f"\n💼 Portfolio Value: ${portfolio['total_value_usd']:,.2f}")
+        
+        # Global stats
+        global_data = self.get_global_market_data()
+        if global_data:
+            total_mcap = global_data.get('total_market_cap', {}).get('usd', 0)
+            print(f"🌍 Global Market Cap: ${total_mcap:,.0f}")
+        
+        print("="*60)
+    
+    def run_continuously(self, interval: int = 60):
+        """Run the bot continuously with updates every interval seconds"""
+        print("🚀 Crypto Bot Started!")
+        print(f"📡 Updating every {interval} seconds...")
+        print("Press Ctrl+C to stop\n")
+        
+        try:
+            while self.running:
+                self.display_market_update()
+                time.sleep(interval)
+        except KeyboardInterrupt:
+            print("\n🛑 Bot stopped by user")
+            self.running = False
+        except Exception as e:
+            print(f"❌ Error: {e}")
+            time.sleep(5)
 
 def main():
-    """Main function with fixed error handling"""
+    """Main entry point"""
     bot = CryptoBot()
     
-    print("🚀 Crypto Bot Started!")
-    print("=" * 50)
+    # Check if we should run continuously or one-time
+    import sys
     
-    # 1. Get Bitcoin and Ethereum prices in one batch
-    prices = bot.get_prices_batch(['bitcoin', 'ethereum'], 'usd')
-    btc_price = prices.get('bitcoin', {}).get('usd', 0)
-    eth_price = prices.get('ethereum', {}).get('usd', 0)
-    
-    print(f"💰 Bitcoin Price: ${btc_price:,.2f}")
-    print(f"💰 Ethereum Price: ${eth_price:,.2f}")
-    
-    # 2. Get top 5 cryptocurrencies
-    print("\n📊 Top 5 Cryptocurrencies:")
-    top_cryptos = bot.get_top_cryptos(5)
-    if top_cryptos:
-        for i, crypto in enumerate(top_cryptos, 1):
-            print(f"{i}. {crypto.get('name', 'Unknown')} (${crypto.get('symbol', '').upper()})")
-            print(f"   Price: ${crypto.get('current_price', 0):,.2f}")
-            print(f"   Market Cap: ${crypto.get('market_cap', 0):,.0f}")
-            print(f"   24h Change: {crypto.get('price_change_percentage_24h', 0):.2f}%\n")
+    if len(sys.argv) > 1 and sys.argv[1] == '--once':
+        # One-time execution
+        bot.display_market_update()
+        print("\n✅ One-time update completed!")
     else:
-        print("   Unable to fetch top cryptocurrencies\n")
-    
-    # 3. Bitcoin price change
-    current_price, change = bot.calculate_price_change('bitcoin', 7)
-    print(f"📈 Bitcoin 7-day Change: {change:.2f}%")
-    
-    # 4. Portfolio tracker using batch request
-    print("\n💼 Portfolio Tracker:")
-    holdings = {
-        'bitcoin': 0.5,
-        'ethereum': 2.0,
-        'cardano': 100
-    }
-    portfolio = bot.portfolio_tracker(holdings)
-    print(f"Total Portfolio Value: ${portfolio['total_value_usd']:,.2f}")
-    for coin, data in portfolio['holdings'].items():
-        print(f"  {coin}: {data['amount']} units (${data['value_usd']:,.2f})")
-    
-    # 5. Price trend analysis with safe error handling
-    print(f"\n📊 Price Trend Analysis (Bitcoin):")
-    trend = bot.get_price_trend('bitcoin', 7)
-    
-    # Safe access with fallback values
-    current_price = trend.get('current_price', 0)
-    highest = trend.get('highest_price', 0)
-    lowest = trend.get('lowest_price', 0)
-    average = trend.get('average_price', 0)
-    volatility = trend.get('volatility', 0)
-    change_7d = trend.get('price_change_7d', 0)
-    
-    print(f"Current: ${current_price:,.2f}")
-    print(f"7-day High: ${highest:,.2f}")
-    print(f"7-day Low: ${lowest:,.2f}")
-    print(f"Average: ${average:,.2f}")
-    print(f"Volatility: {volatility:.2f}")
-    print(f"7-day Change: {change_7d:.2f}%")
-    
-    # 6. Global market data
-    print(f"\n🌍 Global Market Stats:")
-    global_data = bot.get_global_market_data()
-    if global_data:
-        total_mcap = global_data.get('total_market_cap', {}).get('usd', 0)
-        total_volume = global_data.get('total_volume', {}).get('usd', 0)
-        btc_dominance = global_data.get('market_cap_percentage', {}).get('btc', 0)
-        eth_dominance = global_data.get('market_cap_percentage', {}).get('eth', 0)
-        
-        print(f"Total Market Cap: ${total_mcap:,.0f}")
-        print(f"24h Volume: ${total_volume:,.0f}")
-        print(f"BTC Dominance: {btc_dominance:.1f}%")
-        print(f"ETH Dominance: {eth_dominance:.1f}%")
-    
-    print("\n✅ Bot completed successfully!")
+        # Continuous mode (default for Railway)
+        bot.run_continuously(interval=60)  # Update every 60 seconds
 
 if __name__ == "__main__":
     main()
