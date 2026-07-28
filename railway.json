@@ -1,5 +1,8 @@
 {
+  "build": {
+    "builder": "NIXPACKS"
+  },
   "deploy": {
-    "startCommand": "python crypto_bot.py"
+    "startCommand": "python -u crypto_bot.py"
   }
 }
