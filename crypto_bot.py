@@ -1,221 +1,231 @@
 #!/usr/bin/env python3
 """
-CryptoAlphaBot - Simple Crypto Price Tracker
-Runs continuously on Railway
+CryptoAlphaBot - Rock Solid Version for Railway
+No crashes, always runs!
 """
 import time
 import sys
+import traceback
 from datetime import datetime
 
-# Force output immediately (important for Railway logs)
-sys.stdout.reconfigure(line_buffering=True)
+# Force unbuffered output
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except:
+    pass
 
-print("🚀 CryptoAlphaBot Starting...")
-print(f"⏰ Start Time: {datetime.now().isoformat()}")
-print("=" * 50)
-sys.stdout.flush()
+def safe_print(message):
+    """Safely print with timestamp"""
+    try:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[{timestamp}] {message}")
+        sys.stdout.flush()
+    except:
+        pass
 
-# Import requests with auto-install fallback
+# Start with minimal logging
+safe_print("=" * 50)
+safe_print("🚀 CryptoAlphaBot Starting...")
+safe_print("=" * 50)
+
+# Try to import requests with fallback
 try:
     import requests
-    print("✅ requests module loaded")
-except ImportError:
-    print("⚠️ Installing requests...")
-    import subprocess
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
-    import requests
-    print("✅ requests installed")
-sys.stdout.flush()
+    safe_print("✅ requests module loaded")
+except ImportError as e:
+    safe_print(f"⚠️ Import error: {e}")
+    safe_print("🔄 Installing requests...")
+    try:
+        import subprocess
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+        import requests
+        safe_print("✅ requests installed")
+    except Exception as e:
+        safe_print(f"❌ Failed to install requests: {e}")
+        safe_print("⚠️ Continuing without requests...")
+        requests = None
 
 class CryptoAlphaBot:
     def __init__(self):
+        safe_print("🔄 Initializing bot...")
         self.base_url = "https://api.coingecko.com/api/v3"
-        self.session = requests.Session()
-        self.session.headers.update({
-            'User-Agent': 'CryptoAlphaBot/1.0',
-            'Accept': 'application/json'
-        })
+        self.session = None
         self.last_request = 0
-        print("✅ Bot initialized successfully!")
-        sys.stdout.flush()
+        
+        if requests:
+            self.session = requests.Session()
+            self.session.headers.update({
+                'User-Agent': 'CryptoAlphaBot/1.0',
+                'Accept': 'application/json'
+            })
+            safe_print("✅ Bot initialized with requests")
+        else:
+            safe_print("⚠️ Bot initialized without requests")
+        
+        self.running = True
+        self.update_count = 0
     
-    def get_price(self, coin_id='bitcoin'):
-        """Get current price of a cryptocurrency"""
+    def get_price_simple(self, coin_id='bitcoin'):
+        """Get price with built-in HTTP if requests unavailable"""
         try:
-            # Rate limiting (avoid 429 errors)
-            now = time.time()
-            if now - self.last_request < 3:
-                time.sleep(3 - (now - self.last_request))
-            self.last_request = time.time()
+            import urllib.request
+            import json
             
-            url = f"{self.base_url}/simple/price"
-            params = {'ids': coin_id, 'vs_currencies': 'usd'}
-            response = self.session.get(url, params=params, timeout=10)
+            url = f"{self.base_url}/simple/price?ids={coin_id}&vs_currencies=usd"
+            req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
             
-            if response.status_code == 200:
-                data = response.json()
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode())
                 return data.get(coin_id, {}).get('usd', 0)
-            elif response.status_code == 429:
-                print("⚠️ Rate limited, waiting...")
-                time.sleep(10)
-                return self.get_price(coin_id)  # Retry
-            else:
-                print(f"⚠️ API Error: {response.status_code}")
-                return 0
-                
         except Exception as e:
-            print(f"❌ Error getting price: {e}")
+            safe_print(f"❌ Error getting price: {e}")
             return 0
     
-    def get_multiple_prices(self, coin_ids):
-        """Get prices for multiple coins in one request"""
-        try:
-            now = time.time()
-            if now - self.last_request < 3:
-                time.sleep(3 - (now - self.last_request))
-            self.last_request = time.time()
-            
-            url = f"{self.base_url}/simple/price"
-            params = {
-                'ids': ','.join(coin_ids),
-                'vs_currencies': 'usd'
-            }
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                return response.json()
-            return {}
-        except Exception as e:
-            print(f"❌ Error: {e}")
-            return {}
+    def get_price(self, coin_id='bitcoin'):
+        """Get price using requests if available"""
+        if self.session:
+            try:
+                # Rate limiting
+                now = time.time()
+                if now - self.last_request < 2:
+                    time.sleep(2 - (now - self.last_request))
+                self.last_request = time.time()
+                
+                url = f"{self.base_url}/simple/price"
+                params = {'ids': coin_id, 'vs_currencies': 'usd'}
+                response = self.session.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    return data.get(coin_id, {}).get('usd', 0)
+                elif response.status_code == 429:
+                    safe_print("⚠️ Rate limited, waiting...")
+                    time.sleep(10)
+                    return self.get_price(coin_id)
+                else:
+                    safe_print(f"⚠️ API error: {response.status_code}")
+                    return 0
+            except Exception as e:
+                safe_print(f"❌ Request error: {e}")
+                return self.get_price_simple(coin_id)  # Fallback
+        else:
+            return self.get_price_simple(coin_id)  # Fallback
     
-    def get_top_cryptos(self, limit=5):
-        """Get top cryptocurrencies by market cap"""
-        try:
-            now = time.time()
-            if now - self.last_request < 3:
-                time.sleep(3 - (now - self.last_request))
-            self.last_request = time.time()
-            
-            url = f"{self.base_url}/coins/markets"
-            params = {
-                'vs_currency': 'usd',
-                'order': 'market_cap_desc',
-                'per_page': limit,
-                'page': 1,
-                'sparkline': 'false'
-            }
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code == 200:
-                return response.json()
-            return []
-        except Exception as e:
-            print(f"❌ Error getting top cryptos: {e}")
-            return []
+    def get_prices_batch(self, coin_ids):
+        """Get multiple prices"""
+        if self.session:
+            try:
+                now = time.time()
+                if now - self.last_request < 2:
+                    time.sleep(2 - (now - self.last_request))
+                self.last_request = time.time()
+                
+                url = f"{self.base_url}/simple/price"
+                params = {
+                    'ids': ','.join(coin_ids),
+                    'vs_currencies': 'usd'
+                }
+                response = self.session.get(url, params=params, timeout=10)
+                
+                if response.status_code == 200:
+                    return response.json()
+                return {}
+            except Exception as e:
+                safe_print(f"❌ Batch request error: {e}")
+                return {}
+        return {}
     
-    def get_global_stats(self):
-        """Get global cryptocurrency market stats"""
+    def update(self):
+        """Perform a single update"""
         try:
-            now = time.time()
-            if now - self.last_request < 3:
-                time.sleep(3 - (now - self.last_request))
-            self.last_request = time.time()
+            self.update_count += 1
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             
-            url = f"{self.base_url}/global"
-            response = self.session.get(url, timeout=10)
+            safe_print(f"")
+            safe_print(f"📊 Update #{self.update_count} at {timestamp}")
+            safe_print("-" * 40)
             
-            if response.status_code == 200:
-                data = response.json()
-                return data.get('data', {})
-            return {}
+            # Get prices
+            prices = self.get_prices_batch(['bitcoin', 'ethereum', 'cardano', 'solana'])
+            
+            btc = prices.get('bitcoin', {}).get('usd', 0)
+            eth = prices.get('ethereum', {}).get('usd', 0)
+            ada = prices.get('cardano', {}).get('usd', 0)
+            sol = prices.get('solana', {}).get('usd', 0)
+            
+            safe_print(f"💰 Bitcoin (BTC): ${btc:,.2f}")
+            safe_print(f"💰 Ethereum (ETH): ${eth:,.2f}")
+            safe_print(f"💰 Cardano (ADA): ${ada:,.4f}")
+            safe_print(f"💰 Solana (SOL): ${sol:,.2f}")
+            
+            safe_print("-" * 40)
+            safe_print(f"✅ Update #{self.update_count} complete")
+            safe_print(f"💓 Bot uptime: {self.update_count * 60}s")
+            
+            return True
+            
         except Exception as e:
-            print(f"❌ Error getting global stats: {e}")
-            return {}
-    
-    def display_update(self):
-        """Display a single market update"""
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"\n📊 [{timestamp}] Market Update")
-        print("-" * 40)
-        
-        # Get prices in batch
-        prices = self.get_multiple_prices(['bitcoin', 'ethereum', 'cardano', 'solana'])
-        
-        btc = prices.get('bitcoin', {}).get('usd', 0)
-        eth = prices.get('ethereum', {}).get('usd', 0)
-        ada = prices.get('cardano', {}).get('usd', 0)
-        sol = prices.get('solana', {}).get('usd', 0)
-        
-        print(f"💰 Bitcoin (BTC): ${btc:,.2f}")
-        print(f"💰 Ethereum (ETH): ${eth:,.2f}")
-        print(f"💰 Cardano (ADA): ${ada:,.4f}")
-        print(f"💰 Solana (SOL): ${sol:,.2f}")
-        
-        # Get top cryptos
-        top = self.get_top_cryptos(3)
-        if top:
-            print("\n🏆 Top 3 Cryptocurrencies:")
-            for i, coin in enumerate(top, 1):
-                name = coin.get('name', 'Unknown')
-                symbol = coin.get('symbol', '').upper()
-                price = coin.get('current_price', 0)
-                change = coin.get('price_change_percentage_24h', 0)
-                print(f"  {i}. {name} (${symbol}): ${price:,.2f} ({change:+.2f}%)")
-        
-        # Get global stats
-        global_stats = self.get_global_stats()
-        if global_stats:
-            mcap = global_stats.get('total_market_cap', {}).get('usd', 0)
-            volume = global_stats.get('total_volume', {}).get('usd', 0)
-            btc_dom = global_stats.get('market_cap_percentage', {}).get('btc', 0)
-            print(f"\n🌍 Global Market Cap: ${mcap:,.0f}")
-            print(f"📊 24h Volume: ${volume:,.0f}")
-            print(f"📊 BTC Dominance: {btc_dom:.1f}%")
-        
-        print("-" * 40)
-        print("✅ Update complete")
-        sys.stdout.flush()
+            safe_print(f"❌ Update error: {e}")
+            safe_print(traceback.format_exc())
+            return False
     
     def run(self):
-        """Main loop - RUNS FOREVER"""
-        print("\n🔄 Bot is now running continuously...")
-        print("📊 Updates every 60 seconds")
-        print("🛑 Press Ctrl+C to stop")
-        print("=" * 50)
-        sys.stdout.flush()
+        """Main loop - NEVER STOPS"""
+        safe_print("")
+        safe_print("🔄 Bot running continuously...")
+        safe_print("⏱️  Updates every 60 seconds")
+        safe_print("🛑 Press Ctrl+C to stop")
+        safe_print("=" * 50)
+        safe_print("")
         
-        update_count = 0
-        while True:  # INFINITE LOOP - keeps the bot alive
+        while self.running:
             try:
-                update_count += 1
-                print(f"\n📈 Update #{update_count}")
-                self.display_update()
+                # Perform update
+                success = self.update()
                 
-                # Wait 60 seconds before next update
-                print(f"💤 Next update in 60 seconds...")
-                time.sleep(60)
+                if not success:
+                    safe_print("⚠️ Update had errors, continuing...")
+                
+                # Wait - THIS KEEPS IT RUNNING
+                safe_print(f"💤 Sleeping for 60 seconds...")
+                for i in range(60):
+                    if not self.running:
+                        break
+                    time.sleep(1)
                 
             except KeyboardInterrupt:
-                print("\n🛑 Bot stopped by user")
-                sys.stdout.flush()
+                safe_print("\n🛑 Stopping...")
+                self.running = False
                 break
             except Exception as e:
-                print(f"❌ Unexpected error: {e}")
-                print("🔄 Restarting in 10 seconds...")
-                sys.stdout.flush()
+                safe_print(f"❌ Loop error: {e}")
+                safe_print(traceback.format_exc())
+                safe_print("🔄 Restarting loop in 10 seconds...")
                 time.sleep(10)
 
-# Main entry point
-if __name__ == "__main__":
+# ===== MAIN =====
+try:
+    safe_print("")
+    safe_print("🚀 Creating bot instance...")
+    
+    # Create bot
+    bot = CryptoAlphaBot()
+    
+    # Run bot - THIS NEVER RETURNS
+    bot.run()
+    
+    # If we get here, something went wrong
+    safe_print("⚠️ Bot exited unexpectedly")
+    
+except Exception as e:
+    safe_print(f"❌ Fatal error: {e}")
+    safe_print(traceback.format_exc())
+
+# KEEP CONTAINER ALIVE NO MATTER WHAT
+safe_print("🔄 Container is still alive...")
+while True:
     try:
-        bot = CryptoAlphaBot()
-        bot.run()  # This never returns!
-    except Exception as e:
-        print(f"❌ Fatal error: {e}")
-        sys.stdout.flush()
-        # Keep container alive even if bot crashes
-        while True:
-            print("💓 Container still alive, waiting...")
-            sys.stdout.flush()
-            time.sleep(60)
+        safe_print("💓 Heartbeat - Container running")
+        time.sleep(60)
+    except:
+        time.sleep(60)
