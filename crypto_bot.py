@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-CryptoAlphaBot - Working Version for Railway
+CryptoAlphaBot - Working Version
 """
 import time
 import sys
@@ -12,45 +12,36 @@ print(f"⏰ Time: {datetime.now().isoformat()}")
 print("=" * 50)
 sys.stdout.flush()
 
-# Try to import requests
+# Try to import requests, install if not available
 try:
     import requests
     print("✅ requests loaded")
-    HAS_REQUESTS = True
 except ImportError:
-    print("⚠️ requests not found, using urllib")
-    HAS_REQUESTS = False
-    import urllib.request
-    import json
-sys.stdout.flush()
+    print("⚠️ Installing requests...")
+    import subprocess
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    import requests
+    print("✅ requests installed and loaded")
 
 def get_price(coin='bitcoin'):
     """Get crypto price"""
     try:
-        if HAS_REQUESTS:
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
-            response = requests.get(url, timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return data.get(coin, {}).get('usd', 0)
-        else:
-            # Fallback to urllib
-            url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
-            response = urllib.request.urlopen(url, timeout=5)
-            data = json.loads(response.read().decode())
+        url = f"https://api.coingecko.com/api/v3/simple/price?ids={coin}&vs_currencies=usd"
+        response = requests.get(url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
             return data.get(coin, {}).get('usd', 0)
         return 0
     except Exception as e:
-        print(f"❌ Error getting {coin}: {e}")
+        print(f"❌ Error: {e}")
         return 0
 
-# Main loop - Runs forever
-counter = 0
 print("\n🔄 Bot is running...")
 print("📊 Updates every 30 seconds")
 print("=" * 50)
 sys.stdout.flush()
 
+counter = 0
 while True:
     try:
         counter += 1
@@ -59,7 +50,6 @@ while True:
         print(f"\n📊 [{timestamp}] Update #{counter}")
         print("-" * 40)
         
-        # Get prices
         btc = get_price('bitcoin')
         eth = get_price('ethereum')
         
@@ -77,6 +67,5 @@ while True:
         break
     except Exception as e:
         print(f"❌ Error: {e}")
-        print("🔄 Continuing...")
         sys.stdout.flush()
         time.sleep(10)
